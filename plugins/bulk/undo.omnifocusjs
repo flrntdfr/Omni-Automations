@@ -1,0 +1,128 @@
+/*{
+	"type": "action",
+	"targets": ["omnifocus"],
+	"author": "Dufour, Florent",
+	"identifier": "xyz.dufour.of.undø",
+	"version": "2.3",
+	"description": "Activate selected folders, projects, and tasks: set projects active, clear defer/due/flagged on tasks, mark completed tasks incomplete. Logs dropped projects and tasks for manual restore.",
+	"label": "undø",
+	"shortLabel": "undø",
+	"paletteLabel": "undø",
+	"image": "arrow.uturn.backward.circle.fill"
+}*/
+(() => {
+    const SCRIPT_NAME = 'undø';
+    const VERSION = '2.3';
+
+    const action = new PlugIn.Action(function(selection) {
+        console.log(`[${SCRIPT_NAME} v${VERSION}] Starting...`);
+
+        // Collect all unique projects and tasks to process
+        let projects = new Set();
+        let tasks    = new Set();
+
+        // 1. Folders: all projects within
+        if (selection.folders.length > 0) {
+            selection.folders.forEach(folder => {
+                folder.flattenedProjects.forEach(proj => {
+                    projects.add(proj);
+                    proj.flattenedTasks.forEach(task => tasks.add(task));
+                });
+            });
+        }
+
+        // 2. Projects: themselves, plus all tasks
+        if (selection.projects.length > 0) {
+            selection.projects.forEach(proj => {
+                projects.add(proj);
+                proj.flattenedTasks.forEach(task => tasks.add(task));
+            });
+        }
+
+        // 3. Explicitly selected tasks
+        if (selection.tasks.length > 0) {
+            selection.tasks.forEach(task => tasks.add(task));
+        }
+
+        // Track items that cannot be activated because they're dropped
+        let droppedProjects = [];
+        let droppedTasks = [];
+
+        // Actually process projects
+        let projectCount = 0;
+        projects.forEach(proj => {
+            if (proj.status === Project.Status.Dropped || proj.effectiveDropDate) {
+                droppedProjects.push(proj.name);
+                return;
+            }
+            if (proj.status !== Project.Status.Active) {
+                proj.status = Project.Status.Active;
+                projectCount++;
+                console.log(`[${SCRIPT_NAME}] Activated project: '${proj.name}'`);
+            }
+        });
+
+        // Actually process tasks
+        let taskCount = 0;
+        tasks.forEach(task => {
+            if (task.effectiveDropDate) {
+                droppedTasks.push(task.name);
+                return;
+            }
+            let changed = false;
+            if (task.completed) {
+                task.markIncomplete();
+                changed = true;
+            }
+            if (task.deferDate || task.dueDate || task.flagged) {
+                changed = true;
+            }
+            task.deferDate = null;
+            task.dueDate   = null;
+            task.flagged   = false;
+            if (changed) {
+                taskCount++;
+                console.log(`[${SCRIPT_NAME}] Activated task: '${task.name}'`);
+            }
+        });
+
+        // Recap explanation for dropped projects and tasks
+        if (droppedProjects.length > 0) {
+            console.log(`[${SCRIPT_NAME}] The following projects are dropped and cannot be activated by automation:`);
+            droppedProjects.forEach(name => {
+                console.log(`- ${name}`);
+            });
+        }
+        if (droppedTasks.length > 0) {
+            console.log(`[${SCRIPT_NAME}] The following tasks are dropped and cannot be activated by automation:`);
+            droppedTasks.forEach(name => {
+                console.log(`- ${name}`);
+            });
+        }
+        if (droppedProjects.length > 0 || droppedTasks.length > 0) {
+            console.log(`[${SCRIPT_NAME}] OmniFocus does not allow automation scripts to restore dropped items. To activate these, restore them by hand in the OmniFocus UI (show dropped items, then choose 'Restore'). After restoring, rerun this script to complete activation.`);
+        }
+
+        // Final summary
+        if (projectCount === 0 && taskCount === 0 && droppedProjects.length === 0 && droppedTasks.length === 0) {
+            console.log(`[${SCRIPT_NAME} v${VERSION}] 0 changes have been made.`);
+        } else {
+            if (projectCount > 0)
+                console.log(`[${SCRIPT_NAME} v${VERSION}] Activated ${projectCount} ${projectCount === 1 ? 'project' : 'projects'}.`);
+            if (taskCount > 0)
+                console.log(`[${SCRIPT_NAME} v${VERSION}] Activated ${taskCount} ${taskCount === 1 ? 'task' : 'tasks'}.`);
+        }
+        console.log(`[${SCRIPT_NAME} v${VERSION}] Done.`);
+    });
+
+    action.validate = function(selection) {
+        // Enable for any folders, projects, or tasks selected
+        return (
+            selection.folders.length  > 0 ||
+            selection.projects.length > 0 ||
+            selection.tasks.length    > 0
+        );
+    };
+
+    return action;
+})();

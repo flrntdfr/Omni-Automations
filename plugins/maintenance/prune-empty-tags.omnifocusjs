@@ -1,0 +1,102 @@
+/*{
+	"type": "action",
+	"targets": ["omnifocus"],
+	"author": "Dufour, Florent",
+	"identifier": "xyz.dufour.of.prune-empty-tags",
+	"version": "1.0",
+	"description": "Delete tags with no remaining tasks. Handles tag hierarchies bottom-up. Optionally log candidates first. Skips the Forecast tag.",
+	"label": "Prune Empty Tags",
+	"shortLabel": "Prune Tags",
+	"paletteLabel": "Prune Tags",
+	"image": "tag.slash.fill"
+}*/
+(() => {
+	function isEmptyLeafTag(tag) {
+		if (Tag.forecastTag && tag === Tag.forecastTag) {
+			return false;
+		}
+		return tag.tags.length === 0 && tag.remainingTasks.length === 0;
+	}
+
+	function findUnusedTags() {
+		return flattenedTags.filter(tag => tag.remainingTasks.length === 0);
+	}
+
+	function findDeletableLeafTags() {
+		return flattenedTags.filter(tag => isEmptyLeafTag(tag));
+	}
+
+	const action = new PlugIn.Action(async function(selection, sender) {
+		try {
+			const unusedTags = findUnusedTags();
+			const unusedCount = unusedTags.length;
+
+			if (unusedCount === 0) {
+				throw {
+					name: "No Matches",
+					message: "There are no empty tags to prune."
+				};
+			}
+
+			const isAre = unusedCount === 1 ? "is" : "are";
+			const tagWord = unusedCount === 1 ? "tag" : "tags";
+			const thoseWord = unusedCount === 1 ? "this" : "these";
+
+			const alert = new Alert(
+				"Prune Empty Tags",
+				`There ${isAre} ${unusedCount} empty ${tagWord} (no remaining tasks).\nDelete or log ${thoseWord} ${tagWord}?`
+			);
+			alert.addOption("Delete Tags");
+			alert.addOption("Log Tags");
+			alert.addOption("Cancel");
+
+			const buttonIndex = await alert.show();
+
+			if (buttonIndex === 0) {
+				let deletionCount = 0;
+				const deletedNames = [];
+				let tagsToDelete;
+
+				do {
+					tagsToDelete = findDeletableLeafTags();
+					if (tagsToDelete.length > 0) {
+						deletionCount += tagsToDelete.length;
+						deletedNames.push(...tagsToDelete.map(tag => tag.name));
+						tagsToDelete.forEach(tag => deleteObject(tag));
+					}
+				} while (tagsToDelete.length > 0);
+
+				console.clear();
+				console.log(`Pruned ${deletionCount} tag(s):`);
+				console.log(deletedNames.join("\n"));
+
+				new Alert(
+					"Completed",
+					`Deleted ${deletionCount} tag(s).\n\nNames logged to the Automation Console.`
+				).show();
+			} else if (buttonIndex === 1) {
+				const names = unusedTags.map(tag => tag.name).sort();
+				console.clear();
+				console.log("Tag count:", flattenedTags.length);
+				console.log("Empty tag count:", unusedCount);
+				console.log("Empty tags:\n" + names.join("\n"));
+
+				new Alert(
+					"Logged",
+					`${unusedCount} empty tag(s) logged to the Automation Console.`
+				).show();
+			}
+		} catch (err) {
+			if (!err.causedByUserCancelling) {
+				console.error(err.name, err.message);
+				new Alert(err.name, err.message).show();
+			}
+		}
+	});
+
+	action.validate = function(selection, sender) {
+		return true;
+	};
+
+	return action;
+})();

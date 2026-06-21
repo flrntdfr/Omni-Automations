@@ -1,0 +1,108 @@
+/*{
+	"type": "action",
+	"targets": ["omnifocus"],
+	"author": "Dufour, Florent",
+	"identifier": "xyz.dufour.of.set-review-interval",
+	"version": "1.1",
+	"description": "Set the review interval (Review every …) for selected projects and all projects in selected folders.",
+	"label": "Set Review Interval",
+	"shortLabel": "Review Interval",
+	"paletteLabel": "Review Interval",
+	"image": "arrow.triangle.2.circlepath"
+}*/
+(() => {
+	const UNIT_VALUES = ["days", "weeks", "months", "years"];
+	const UNIT_LABELS = ["Day", "Week", "Month", "Year"];
+	const UNIT_INDEXES = [0, 1, 2, 3];
+	const DEFAULT_STEPS = 1;
+	const DEFAULT_UNIT_INDEX = 1; // weeks
+
+	const preferences = new Preferences();
+
+	function buildStepOptions(maxSteps) {
+		const indexes = [];
+		const labels = [];
+		for (let i = 0; i < maxSteps; i++) {
+			indexes.push(i);
+			labels.push(String(i + 1));
+		}
+		return { indexes, labels };
+	}
+
+	function readStoredStepIndex() {
+		const stored = preferences.readNumber("stepIndex");
+		return stored === null ? DEFAULT_STEPS - 1 : stored;
+	}
+
+	function readStoredUnitIndex() {
+		const stored = preferences.readNumber("unitIndex");
+		return stored === null ? DEFAULT_UNIT_INDEX : stored;
+	}
+
+	function collectProjects(selection) {
+		const projects = new Set();
+		selection.folders.forEach(folder => {
+			folder.flattenedProjects.forEach(project => projects.add(project));
+		});
+		selection.projects.forEach(project => projects.add(project));
+		return projects;
+	}
+
+	const action = new PlugIn.Action(async function(selection, sender) {
+		try {
+			const projects = collectProjects(selection);
+			const count = projects.size;
+			const { indexes: stepIndexes, labels: stepLabels } = buildStepOptions(52);
+
+			const stepField = new Form.Field.Option(
+				"stepIndex",
+				"Review every",
+				stepIndexes,
+				stepLabels,
+				readStoredStepIndex()
+			);
+			const unitField = new Form.Field.Option(
+				"unitIndex",
+				"Unit",
+				UNIT_INDEXES,
+				UNIT_LABELS,
+				readStoredUnitIndex()
+			);
+
+			const form = new Form();
+			form.addField(stepField);
+			form.addField(unitField);
+
+			const prompt = count === 1
+				? "Set review interval for 1 project"
+				: `Set review interval for ${count} projects`;
+
+			const result = await form.show(prompt, "Apply");
+			const stepIndex = result.values.stepIndex;
+			const unitIndex = result.values.unitIndex;
+			const steps = stepIndex + 1;
+			const unit = UNIT_VALUES[unitIndex];
+
+			preferences.write("stepIndex", stepIndex);
+			preferences.write("unitIndex", unitIndex);
+
+			for (const project of projects) {
+				const interval = project.reviewInterval;
+				interval.steps = steps;
+				interval.unit = unit;
+				project.reviewInterval = interval;
+			}
+		} catch (err) {
+			if (!err.causedByUserCancelling) {
+				console.error(err.name, err.message);
+				new Alert(err.name, err.message).show();
+			}
+		}
+	});
+
+	action.validate = function(selection, sender) {
+		return selection.projects.length > 0 || selection.folders.length > 0;
+	};
+
+	return action;
+})();
