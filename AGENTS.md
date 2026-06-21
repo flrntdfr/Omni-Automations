@@ -72,6 +72,7 @@ When generating OmniFocus automation code, **rely on this repo and its local ref
 | `plugins/bulk/set-review-interval.omnifocusjs` | Set Review Interval | Set “Review every” cadence for selected projects and projects in selected folders; remembers last choice. |
 | `plugins/bulk/undo.omnifocusjs` | undø | Activate selected folders, projects, and tasks: set projects active, clear defer/due/flagged on tasks, mark completed tasks incomplete. Logs dropped projects and tasks for manual restore. |
 | `plugins/maintenance/prune-empty-tags.omnifocusjs` | Prune Empty Tags | Delete tags with no remaining tasks; log or delete after confirmation; skips Forecast tag. |
+| `plugins/reporting/database-stats.omnifocusjs` | Database Stats | Comprehensive database statistics with summary alert and full Automation Console report. |
 
 ## Install (for users)
 

@@ -1,0 +1,509 @@
+/*{
+	"type": "action",
+	"targets": ["omnifocus"],
+	"author": "Dufour, Florent",
+	"identifier": "xyz.dufour.of.database-stats",
+	"version": "1.1",
+	"description": "Comprehensive statistics on your OmniFocus database: projects, tasks, tags, folders, workload, and health indicators. Full report in the Automation Console.",
+	"label": "Database Stats",
+	"shortLabel": "Stats",
+	"paletteLabel": "Database Stats",
+	"image": "chart.bar.doc.horizontal.fill"
+}*/
+(() => {
+	const cal = Calendar.current;
+	const now = new Date();
+	const startOfToday = cal.startOfDay(now);
+	const tomorrowComponents = new DateComponents();
+	tomorrowComponents.day = 1;
+	const startOfTomorrow = cal.dateByAddingDateComponents(startOfToday, tomorrowComponents);
+
+	function pct(part, total) {
+		if (total === 0) {
+			return "0%";
+		}
+		return `${Math.round((part / total) * 100)}%`;
+	}
+
+	function formatMinutes(minutes) {
+		if (minutes === 0) {
+			return "0m";
+		}
+		const h = Math.floor(minutes / 60);
+		const m = minutes % 60;
+		if (h === 0) {
+			return `${m}m`;
+		}
+		if (m === 0) {
+			return `${h}h`;
+		}
+		return `${h}h ${m}m`;
+	}
+
+	function line(label, value) {
+		return `${label.padEnd(32)} ${value}`;
+	}
+
+	function section(title) {
+		return `\n── ${title} ${"─".repeat(Math.max(0, 52 - title.length))}`;
+	}
+
+	function notePlainText(note) {
+		if (!note) {
+			return "";
+		}
+		if (typeof note === "string") {
+			return note;
+		}
+		return note.string || "";
+	}
+
+	function hasNote(object) {
+		return notePlainText(object.note).trim().length > 0;
+	}
+
+	function isProjectRootTask(task) {
+		return task.project !== null;
+	}
+
+	function isDueToday(date) {
+		return date && date >= startOfToday && date < startOfTomorrow;
+	}
+
+	function isDeferred(task) {
+		const defer = task.effectiveDeferDate;
+		return defer && defer > now;
+	}
+
+	function collectStats() {
+		const stats = {
+			generatedAt: now,
+			projects: {
+				total: 0,
+				active: 0,
+				onHold: 0,
+				done: 0,
+				dropped: 0,
+				flagged: 0,
+				deferred: 0,
+				dueToday: 0,
+				overdue: 0,
+				repeating: 0,
+				singletonHolders: 0,
+				dueForReview: 0,
+				overdueReview: 0,
+				emptyActive: 0,
+				sequential: 0,
+				parallel: 0
+			},
+			tasks: {
+				total: 0,
+				projectRoots: 0,
+				actionItems: 0,
+				inbox: 0,
+				inProject: 0,
+				nested: 0,
+				actionGroups: 0,
+				available: 0,
+				next: 0,
+				blocked: 0,
+				dueSoon: 0,
+				overdue: 0,
+				completed: 0,
+				dropped: 0,
+				flagged: 0,
+				deferred: 0,
+				dueToday: 0,
+				withDueDate: 0,
+				withDeferDate: 0,
+				withEstimate: 0,
+				withTags: 0,
+				withoutTags: 0,
+				withNotes: 0,
+				repeating: 0,
+				assignedInInbox: 0,
+				estimatedMinutesAvailable: 0
+			},
+			tags: {
+				total: 0,
+				active: 0,
+				onHold: 0,
+				dropped: 0,
+				groups: 0,
+				leaves: 0,
+				empty: 0,
+				withTasks: 0
+			},
+			folders: {
+				total: 0,
+				active: 0,
+				dropped: 0
+			},
+			health: {
+				openActions: 0,
+				attentionItems: 0
+			},
+			topProjects: [],
+			oldestOverdue: []
+		};
+
+		const projectLoad = new Map();
+
+		for (const project of flattenedProjects) {
+			stats.projects.total += 1;
+
+			switch (project.status) {
+				case Project.Status.Active:
+					stats.projects.active += 1;
+					break;
+				case Project.Status.OnHold:
+					stats.projects.onHold += 1;
+					break;
+				case Project.Status.Done:
+					stats.projects.done += 1;
+					break;
+				case Project.Status.Dropped:
+					stats.projects.dropped += 1;
+					break;
+			}
+
+			if (project.flagged) {
+				stats.projects.flagged += 1;
+			}
+			if (project.effectiveDeferDate && project.effectiveDeferDate > now) {
+				stats.projects.deferred += 1;
+			}
+			if (isDueToday(project.dueDate) && project.status === Project.Status.Active) {
+				stats.projects.dueToday += 1;
+			}
+			if (project.dueDate && project.dueDate < startOfToday && project.status === Project.Status.Active) {
+				stats.projects.overdue += 1;
+			}
+			if (project.repetitionRule) {
+				stats.projects.repeating += 1;
+			}
+			if (project.defaultSingletonActionHolder) {
+				stats.projects.singletonHolders += 1;
+			}
+			if (project.sequential) {
+				stats.projects.sequential += 1;
+			} else {
+				stats.projects.parallel += 1;
+			}
+
+			if (project.nextReviewDate) {
+				if (project.nextReviewDate <= startOfToday && project.status === Project.Status.Active) {
+					stats.projects.dueForReview += 1;
+				}
+				if (project.nextReviewDate < startOfToday && project.status === Project.Status.Active) {
+					stats.projects.overdueReview += 1;
+				}
+			}
+
+			if (project.status === Project.Status.Active) {
+				const remaining = project.tasks.filter(task => !task.completed && !task.effectiveDropDate).length;
+				if (remaining === 0) {
+					stats.projects.emptyActive += 1;
+				}
+				projectLoad.set(project.name, remaining);
+			}
+		}
+
+		stats.topProjects = [...projectLoad.entries()]
+			.sort((a, b) => b[1] - a[1])
+			.slice(0, 5)
+			.filter(([, count]) => count > 0);
+
+		const overdueCandidates = [];
+
+		for (const task of flattenedTasks) {
+			stats.tasks.total += 1;
+
+			if (isProjectRootTask(task)) {
+				stats.tasks.projectRoots += 1;
+				continue;
+			}
+
+			stats.tasks.actionItems += 1;
+
+			if (task.inInbox) {
+				stats.tasks.inbox += 1;
+				if (task.assignedContainer) {
+					stats.tasks.assignedInInbox += 1;
+				}
+			} else if (task.containingProject) {
+				stats.tasks.inProject += 1;
+			}
+			if (task.parent instanceof Task) {
+				stats.tasks.nested += 1;
+			}
+			if (task.tasks.length > 0) {
+				stats.tasks.actionGroups += 1;
+			}
+
+			const status = task.taskStatus;
+			if (status === Task.Status.Available) {
+				stats.tasks.available += 1;
+			} else if (status === Task.Status.Next) {
+				stats.tasks.next += 1;
+			} else if (status === Task.Status.Blocked) {
+				stats.tasks.blocked += 1;
+			} else if (status === Task.Status.DueSoon) {
+				stats.tasks.dueSoon += 1;
+			} else if (status === Task.Status.Overdue) {
+				stats.tasks.overdue += 1;
+				if (task.dueDate) {
+					overdueCandidates.push({ name: task.name, dueDate: task.dueDate });
+				}
+			} else if (status === Task.Status.Completed) {
+				stats.tasks.completed += 1;
+			} else if (status === Task.Status.Dropped) {
+				stats.tasks.dropped += 1;
+			}
+
+			if (task.flagged && !task.completed && !task.effectiveDropDate) {
+				stats.tasks.flagged += 1;
+			}
+			if (isDeferred(task) && !task.completed && !task.effectiveDropDate) {
+				stats.tasks.deferred += 1;
+			}
+			if (isDueToday(task.dueDate) && !task.completed && !task.effectiveDropDate) {
+				stats.tasks.dueToday += 1;
+			}
+			if (task.dueDate) {
+				stats.tasks.withDueDate += 1;
+			}
+			if (task.deferDate) {
+				stats.tasks.withDeferDate += 1;
+			}
+			if (task.estimatedMinutes) {
+				stats.tasks.withEstimate += 1;
+			}
+			if (task.tags.length > 0) {
+				stats.tasks.withTags += 1;
+			} else if (!task.completed && !task.effectiveDropDate) {
+				stats.tasks.withoutTags += 1;
+			}
+			if (hasNote(task)) {
+				stats.tasks.withNotes += 1;
+			}
+			if (task.repetitionRule) {
+				stats.tasks.repeating += 1;
+			}
+
+			const isOpen = !task.completed && !task.effectiveDropDate;
+			const isActionable = isOpen && (
+				status === Task.Status.Available ||
+				status === Task.Status.Next ||
+				status === Task.Status.DueSoon ||
+				status === Task.Status.Overdue
+			);
+
+			if (isOpen) {
+				stats.health.openActions += 1;
+			}
+			if (isActionable) {
+				if (task.estimatedMinutes) {
+					stats.tasks.estimatedMinutesAvailable += task.estimatedMinutes;
+				}
+			}
+			if (isOpen && (task.flagged || status === Task.Status.Overdue || status === Task.Status.DueSoon)) {
+				stats.health.attentionItems += 1;
+			}
+		}
+
+		stats.oldestOverdue = overdueCandidates
+			.sort((a, b) => a.dueDate - b.dueDate)
+			.slice(0, 5);
+
+		for (const tag of flattenedTags) {
+			stats.tags.total += 1;
+
+			switch (tag.status) {
+				case Tag.Status.Active:
+					stats.tags.active += 1;
+					break;
+				case Tag.Status.OnHold:
+					stats.tags.onHold += 1;
+					break;
+				case Tag.Status.Dropped:
+					stats.tags.dropped += 1;
+					break;
+			}
+
+			if (tag.tags.length > 0) {
+				stats.tags.groups += 1;
+			} else {
+				stats.tags.leaves += 1;
+			}
+
+			const remaining = tag.remainingTasks.length;
+			if (remaining === 0) {
+				stats.tags.empty += 1;
+			} else {
+				stats.tags.withTasks += 1;
+			}
+		}
+
+		for (const folder of flattenedFolders) {
+			stats.folders.total += 1;
+			if (folder.status === Folder.Status.Active) {
+				stats.folders.active += 1;
+			} else {
+				stats.folders.dropped += 1;
+			}
+		}
+
+		return stats;
+	}
+
+	function formatReport(stats) {
+		const p = stats.projects;
+		const t = stats.tasks;
+		const tg = stats.tags;
+		const f = stats.folders;
+		const h = stats.health;
+		const lines = [];
+
+		lines.push("OmniFocus Database Stats");
+		lines.push(`Generated ${stats.generatedAt.toLocaleString()}`);
+		lines.push(`Platform: ${app.platformName}`);
+
+		lines.push(section("Snapshot"));
+		lines.push(line("Open actions", h.openActions));
+		lines.push(line("Needs attention", h.attentionItems));
+		lines.push(line("Active projects", p.active));
+		lines.push(line("Inbox items", t.inbox));
+		lines.push(line("Estimated workload", formatMinutes(t.estimatedMinutesAvailable)));
+
+		lines.push(section("Projects"));
+		lines.push(line("Total", p.total));
+		lines.push(line("Active", `${p.active} (${pct(p.active, p.total)})`));
+		lines.push(line("On hold", p.onHold));
+		lines.push(line("Done", p.done));
+		lines.push(line("Dropped", p.dropped));
+		lines.push(line("Flagged", p.flagged));
+		lines.push(line("Deferred", p.deferred));
+		lines.push(line("Due today", p.dueToday));
+		lines.push(line("Overdue", p.overdue));
+		lines.push(line("Repeating", p.repeating));
+		lines.push(line("Sequential / parallel", `${p.sequential} / ${p.parallel}`));
+		lines.push(line("Singleton holders", p.singletonHolders));
+		lines.push(line("Due for review", p.dueForReview));
+		lines.push(line("Review overdue", p.overdueReview));
+		lines.push(line("Active but empty", p.emptyActive));
+
+		lines.push(section("Tasks"));
+		lines.push(line("Total in database", t.total));
+		lines.push(line("Project root tasks", t.projectRoots));
+		lines.push(line("Action items", t.actionItems));
+		lines.push(line("In inbox", t.inbox));
+		lines.push(line("Inbox → assigned", t.assignedInInbox));
+		lines.push(line("In projects", t.inProject));
+		lines.push(line("Nested (subtasks)", t.nested));
+		lines.push(line("Action groups", t.actionGroups));
+		lines.push("");
+		lines.push(line("Available", `${t.available} (${pct(t.available, t.actionItems)})`));
+		lines.push(line("Next action", t.next));
+		lines.push(line("Blocked", t.blocked));
+		lines.push(line("Due soon", t.dueSoon));
+		lines.push(line("Overdue", t.overdue));
+		lines.push(line("Completed", `${t.completed} (${pct(t.completed, t.actionItems)})`));
+		lines.push(line("Dropped", t.dropped));
+		lines.push("");
+		lines.push(line("Flagged (open)", t.flagged));
+		lines.push(line("Deferred (open)", t.deferred));
+		lines.push(line("Due today (open)", t.dueToday));
+		lines.push(line("With due date", t.withDueDate));
+		lines.push(line("With defer date", t.withDeferDate));
+		lines.push(line("With time estimate", t.withEstimate));
+		lines.push(line("With tags (open)", t.withTags));
+		lines.push(line("Untagged (open)", t.withoutTags));
+		lines.push(line("With notes", t.withNotes));
+		lines.push(line("Repeating", t.repeating));
+
+		if (stats.topProjects.length > 0) {
+			lines.push(section("Busiest active projects"));
+			for (const [name, count] of stats.topProjects) {
+				lines.push(`  • ${name} — ${count} open task${count === 1 ? "" : "s"}`);
+			}
+		}
+
+		if (stats.oldestOverdue.length > 0) {
+			lines.push(section("Oldest overdue tasks"));
+			for (const item of stats.oldestOverdue) {
+				lines.push(`  • ${item.name} (due ${item.dueDate.toLocaleDateString()})`);
+			}
+		}
+
+		lines.push(section("Tags"));
+		lines.push(line("Total", tg.total));
+		lines.push(line("Active", tg.active));
+		lines.push(line("On hold", tg.onHold));
+		lines.push(line("Dropped", tg.dropped));
+		lines.push(line("Groups / leaves", `${tg.groups} / ${tg.leaves}`));
+		lines.push(line("With tasks", tg.withTasks));
+		lines.push(line("Empty", tg.empty));
+
+		lines.push(section("Folders"));
+		lines.push(line("Total", f.total));
+		lines.push(line("Active", f.active));
+		lines.push(line("Dropped", f.dropped));
+
+		lines.push(section("Ratios"));
+		if (p.active > 0) {
+			lines.push(line("Open tasks / active project", (h.openActions / p.active).toFixed(1)));
+		}
+		if (t.actionItems > 0) {
+			lines.push(line("Completed / all actions", pct(t.completed, t.actionItems)));
+			lines.push(line("Overdue / open actions", pct(t.overdue, h.openActions)));
+			lines.push(line("Inbox / open actions", pct(t.inbox, h.openActions)));
+		}
+		if (tg.total > 0) {
+			lines.push(line("Empty tags / all tags", pct(tg.empty, tg.total)));
+		}
+
+		return lines.join("\n");
+	}
+
+	function formatSummary(stats) {
+		const p = stats.projects;
+		const t = stats.tasks;
+		const tg = stats.tags;
+
+		return [
+			`${stats.health.openActions} open actions · ${stats.health.attentionItems} need attention`,
+			"",
+			`Projects: ${p.active} active, ${p.onHold} on hold, ${p.done} done`,
+			`Tasks: ${t.available} available, ${t.overdue} overdue, ${t.completed} completed`,
+			`Inbox: ${t.inbox} item${t.inbox === 1 ? "" : "s"}`,
+			`Tags: ${tg.total} total (${tg.empty} empty) · Folders: ${stats.folders.active} active`,
+			`Workload estimate: ${formatMinutes(t.estimatedMinutesAvailable)}`,
+			"",
+			"Full report logged to the Automation Console."
+		].join("\n");
+	}
+
+	const action = new PlugIn.Action(async function(selection, sender) {
+		try {
+			const stats = collectStats();
+			const report = formatReport(stats);
+
+			console.clear();
+			console.log(report);
+
+			new Alert("Database Stats", formatSummary(stats)).show();
+		} catch (err) {
+			if (!err.causedByUserCancelling) {
+				console.error(err.name, err.message);
+				new Alert(err.name, err.message).show();
+			}
+		}
+	});
+
+	action.validate = function(selection, sender) {
+		return true;
+	};
+
+	return action;
+})();
